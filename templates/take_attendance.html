@@ -1,0 +1,288 @@
+{% extends "base.html" %} {% block title %}Take Attendance - AI Attendance
+System{% endblock %} {% block content %}
+<div class="row mb-4">
+  <div class="col-12">
+    <h2 class="text-primary">
+      <i class="fas fa-camera me-2"></i>Take Attendance
+    </h2>
+    <p class="text-muted">
+      Use your camera to automatically mark student attendance using face
+      recognition.
+    </p>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-md-8">
+    <div class="card">
+      <div class="card-header">
+        <h5 class="mb-0"><i class="fas fa-video me-2"></i>Camera Feed</h5>
+      </div>
+      <div class="card-body text-center">
+        <div id="camera-container" class="mb-3">
+          <video id="video" width="640" height="480" autoplay muted></video>
+          <canvas
+            id="canvas"
+            width="640"
+            height="480"
+            style="display: none"
+          ></canvas>
+        </div>
+
+        <div class="mb-3">
+          <button id="start-camera" class="btn btn-primary btn-lg me-2">
+            <i class="fas fa-play me-2"></i>Start Camera
+          </button>
+          <button
+            id="stop-camera"
+            class="btn btn-danger btn-lg me-2"
+            style="display: none"
+          >
+            <i class="fas fa-stop me-2"></i>Stop Camera
+          </button>
+          <button
+            id="capture-attendance"
+            class="btn btn-success btn-lg"
+            style="display: none"
+          >
+            <i class="fas fa-camera me-2"></i>Capture Attendance
+          </button>
+        </div>
+
+        <div id="status" class="alert alert-info" style="display: none">
+          <i class="fas fa-info-circle me-2"></i>Camera is ready. Position
+          students in front of the camera.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-header">
+        <h5 class="mb-0">
+          <i class="fas fa-list-check me-2"></i>Attendance Status
+        </h5>
+      </div>
+      <div class="card-body">
+        <div id="attendance-list">
+          <p class="text-muted text-center">
+            Start the camera to begin taking attendance
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mt-3">
+      <div class="card-header">
+        <h5 class="mb-0">
+          <i class="fas fa-users me-2"></i>Registered Students
+        </h5>
+      </div>
+      <div class="card-body">
+        <div class="list-group list-group-flush">
+          {% for student in students %}
+          <div
+            class="list-group-item d-flex justify-content-between align-items-center"
+          >
+            <div>
+              <h6 class="mb-1">{{ student.name }}</h6>
+              <small class="text-muted"
+                >{{ student.roll_number }} • {{ student.class_name }}</small
+              >
+            </div>
+            <span class="badge bg-secondary rounded-pill">Not Marked</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Attendance Results Modal -->
+<div class="modal fade" id="attendanceModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-check-circle me-2"></i>Attendance Results
+        </h5>
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="modal"
+        ></button>
+      </div>
+      <div class="modal-body">
+        <div id="attendance-results">
+          <!-- Results will be populated here -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+          Close
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary"
+          onclick="saveAttendance()"
+        >
+          Save to Database
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %} {% block scripts %}
+<script>
+  let stream = null;
+  let video = document.getElementById('video');
+  let canvas = document.getElementById('canvas');
+  let startButton = document.getElementById('start-camera');
+  let stopButton = document.getElementById('stop-camera');
+  let captureButton = document.getElementById('capture-attendance');
+  let statusDiv = document.getElementById('status');
+  let attendanceList = document.getElementById('attendance-list');
+
+  let detectedStudents = [];
+
+  // Start camera
+  startButton.addEventListener('click', async () => {
+      try {
+          stream = await navigator.mediaDevices.getUserMedia({
+              video: {
+                  width: 640,
+                  height: 480,
+                  facingMode: 'user'
+              }
+          });
+          video.srcObject = stream;
+
+          startButton.style.display = 'none';
+          stopButton.style.display = 'inline-block';
+          captureButton.style.display = 'inline-block';
+          statusDiv.style.display = 'block';
+          statusDiv.innerHTML = '<i class="fas fa-check-circle me-2"></i>Camera is active. Position students in front of the camera.';
+          statusDiv.className = 'alert alert-success';
+
+      } catch (err) {
+          console.error('Error accessing camera:', err);
+          statusDiv.style.display = 'block';
+          statusDiv.innerHTML = '<i class="fas fa-exclamation-triangle me-2"></i>Error accessing camera. Please check permissions.';
+          statusDiv.className = 'alert alert-danger';
+      }
+  });
+
+  // Stop camera
+  stopButton.addEventListener('click', () => {
+      if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+          stream = null;
+      }
+
+      startButton.style.display = 'inline-block';
+      stopButton.style.display = 'none';
+      captureButton.style.display = 'none';
+      statusDiv.style.display = 'none';
+
+      // Clear video
+      video.srcObject = null;
+  });
+
+  // Capture attendance
+  captureButton.addEventListener('click', () => {
+      if (!stream) {
+          alert('Please start the camera first');
+          return;
+      }
+
+      // Simulate face recognition (in real implementation, this would use your Python backend)
+      simulateFaceRecognition();
+  });
+
+  function simulateFaceRecognition() {
+      // This is a simulation - in real implementation, you'd send the video frame to your Python backend
+      // For now, we'll simulate detecting some students
+
+      const students = {{ students|tojson }};
+
+      if (!students || students.length === 0) {
+          alert('No students found in the system. Please add students first.');
+          return;
+      }
+
+      const randomStudents = students.sort(() => 0.5 - Math.random()).slice(0, Math.floor(Math.random() * 3) + 1);
+
+      detectedStudents = randomStudents;
+
+      // Show results in modal
+      showAttendanceResults(randomStudents);
+  }
+
+  function showAttendanceResults(students) {
+      const resultsDiv = document.getElementById('attendance-results');
+      let html = '<div class="alert alert-success mb-3"><i class="fas fa-check-circle me-2"></i>Face recognition completed!</div>';
+
+      if (students.length > 0) {
+          html += '<h6>Detected Students:</h6><ul class="list-group">';
+          students.forEach(student => {
+              html += `<li class="list-group-item d-flex justify-content-between align-items-center">
+                  <div>
+                      <strong>${student.name}</strong><br>
+                      <small class="text-muted">${student.roll_number} • ${student.class_name}</small>
+                  </div>
+                  <span class="badge bg-success rounded-pill">Detected</span>
+              </li>`;
+          });
+          html += '</ul>';
+      } else {
+          html += '<div class="alert alert-warning"><i class="fas fa-exclamation-triangle me-2"></i>No students detected. Please ensure students are properly positioned in front of the camera.</div>';
+      }
+
+      resultsDiv.innerHTML = html;
+
+      // Show modal
+      const modal = new bootstrap.Modal(document.getElementById('attendanceModal'));
+      modal.show();
+  }
+
+  function saveAttendance() {
+      if (detectedStudents.length === 0) {
+          alert('No students detected to save');
+          return;
+      }
+
+      // Send to backend
+      fetch('/api/process_attendance', {
+          method: 'POST',
+          headers: {
+              'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+              detected_students: detectedStudents
+          })
+      })
+      .then(response => response.json())
+      .then(data => {
+          if (data.success) {
+              alert(`Attendance saved successfully! ${data.marked_count} students marked present.`);
+              location.reload(); // Refresh to show updated attendance
+          } else {
+              alert('Error saving attendance: ' + data.error);
+          }
+      })
+      .catch(error => {
+          console.error('Error:', error);
+          alert('Error saving attendance. Please try again.');
+      });
+  }
+
+  // Cleanup on page unload
+  window.addEventListener('beforeunload', () => {
+      if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+      }
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,117 @@
+{% extends "base.html" %} {% block title %}Add Student - AI Attendance System{%
+endblock %} {% block content %}
+<div class="row mb-4">
+  <div class="col-12">
+    <h2 class="text-primary">
+      <i class="fas fa-user-plus me-2"></i>Add New Student
+    </h2>
+    <p class="text-muted">Register a new student in the attendance system.</p>
+  </div>
+</div>
+
+<div class="row justify-content-center">
+  <div class="col-md-8 col-lg-6">
+    <div class="card shadow">
+      <div class="card-header bg-success text-white">
+        <h5 class="mb-0">
+          <i class="fas fa-user-graduate me-2"></i>Student Information
+        </h5>
+      </div>
+      <div class="card-body p-4">
+        <form method="POST">
+          <div class="row">
+            <div class="col-md-6 mb-3">
+              <label for="name" class="form-label">Full Name *</label>
+              <input
+                type="text"
+                class="form-control"
+                id="name"
+                name="name"
+                required
+              />
+            </div>
+
+            <div class="col-md-6 mb-3">
+              <label for="roll_number" class="form-label">Roll Number *</label>
+              <input
+                type="text"
+                class="form-control"
+                id="roll_number"
+                name="roll_number"
+                required
+              />
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label for="class_name" class="form-label">Class *</label>
+            <select
+              class="form-select"
+              id="class_name"
+              name="class_name"
+              required
+            >
+              <option value="">Select Class</option>
+              <option value="Class 1">Class 1</option>
+              <option value="Class 2">Class 2</option>
+              <option value="Class 3">Class 3</option>
+              <option value="Class 4">Class 4</option>
+              <option value="Class 5">Class 5</option>
+              <option value="Class 6">Class 6</option>
+              <option value="Class 7">Class 7</option>
+              <option value="Class 8">Class 8</option>
+              <option value="Class 9">Class 9</option>
+              <option value="Class 10">Class 10</option>
+              <option value="Class 11">Class 11</option>
+              <option value="Class 12">Class 12</option>
+            </select>
+          </div>
+
+          <div class="alert alert-info">
+            <i class="fas fa-info-circle me-2"></i>
+            <strong>Important:</strong> After adding a student, you'll need to
+            add their face images to the
+            <code>dataset/[StudentName]/</code> folder for face recognition to
+            work.
+          </div>
+
+          <div class="d-grid gap-2">
+            <button type="submit" class="btn btn-success btn-lg">
+              <i class="fas fa-save me-2"></i>Add Student
+            </button>
+            <a
+              href="{{ url_for('dashboard') }}"
+              class="btn btn-outline-secondary"
+            >
+              <i class="fas fa-arrow-left me-2"></i>Back to Dashboard
+            </a>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Instructions for adding face images -->
+    <div class="card mt-4">
+      <div class="card-header bg-info text-white">
+        <h6 class="mb-0">
+          <i class="fas fa-camera me-2"></i>How to Add Face Images
+        </h6>
+      </div>
+      <div class="card-body">
+        <ol class="mb-0">
+          <li>
+            Create a folder with the student's name in the
+            <code>dataset/</code> directory
+          </li>
+          <li>
+            Add multiple clear face images (JPG/PNG format) of the student
+          </li>
+          <li>Ensure good lighting and clear visibility of the face</li>
+          <li>Images should be from different angles for better recognition</li>
+          <li>Recommended: 5-10 images per student</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,449 @@
+{% extends "base.html" %} {% block title %}Dashboard - AI Attendance System{%
+endblock %} {% block content %}
+<div class="row mb-4">
+  <div class="col-12">
+    <h2 class="text-primary">
+      <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+    </h2>
+    <p class="text-muted">
+      Welcome back, {{ session.teacher_name }}! Here's today's attendance
+      overview.
+    </p>
+  </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row mb-4">
+  <div class="col-md-3 mb-3">
+    <div class="card bg-primary text-white">
+      <div class="card-body">
+        <div class="d-flex justify-content-between">
+          <div>
+            <h4 class="card-title">{{ students|length }}</h4>
+            <p class="card-text">Total Students</p>
+          </div>
+          <div class="align-self-center">
+            <i class="fas fa-users fa-2x"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3 mb-3">
+    <div class="card bg-success text-white">
+      <div class="card-body">
+        <div class="d-flex justify-content-between">
+          <div>
+            <h4 class="card-title">{{ today_attendance|length }}</h4>
+            <p class="card-text">Present Today</p>
+          </div>
+          <div class="align-self-center">
+            <i class="fas fa-check-circle fa-2x"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3 mb-3">
+    <div class="card bg-warning text-white">
+      <div class="card-body">
+        <div class="d-flex justify-content-between">
+          <div>
+            <h4 class="card-title">
+              {{ students|length - today_attendance|length }}
+            </h4>
+            <p class="card-text">Absent Today</p>
+          </div>
+          <div class="align-self-center">
+            <i class="fas fa-times-circle fa-2x"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3 mb-3">
+    <div class="card bg-info text-white">
+      <div class="card-body">
+        <div class="d-flex justify-content-between">
+          <div>
+            <h4 class="card-title">
+              {{ "%.1f"|format((today_attendance|length / students|length * 100)
+              if students|length > 0 else 0) }}%
+            </h4>
+            <p class="card-text">Attendance Rate</p>
+          </div>
+          <div class="align-self-center">
+            <i class="fas fa-percentage fa-2x"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row mb-4">
+  <div class="col-12">
+    <div class="card">
+      <div class="card-header">
+        <h5 class="mb-0"><i class="fas fa-bolt me-2"></i>Quick Actions</h5>
+      </div>
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-4 mb-3">
+            <a
+              href="{{ url_for('take_attendance') }}"
+              class="btn btn-primary btn-lg w-100"
+            >
+              <i class="fas fa-camera me-2"></i>Take Attendance
+            </a>
+          </div>
+          <div class="col-md-4 mb-3">
+            <a
+              href="{{ url_for('add_student') }}"
+              class="btn btn-success btn-lg w-100"
+            >
+              <i class="fas fa-user-plus me-2"></i>Add Student
+            </a>
+          </div>
+          <div class="col-md-4 mb-3">
+            <div class="dropdown">
+              <button
+                class="btn btn-info btn-lg w-100 dropdown-toggle"
+                type="button"
+                id="exportDropdown"
+                data-bs-toggle="dropdown"
+                aria-expanded="false"
+              >
+                <i class="fas fa-download me-2"></i>Export Report
+              </button>
+              <ul class="dropdown-menu w-100" aria-labelledby="exportDropdown">
+                <li>
+                  <a
+                    class="dropdown-item"
+                    href="#"
+                    onclick="exportAttendance()"
+                  >
+                    <i class="fas fa-calendar-day me-2"></i>Today's Report
+                  </a>
+                </li>
+                <li>
+                  <a
+                    class="dropdown-item"
+                    href="#"
+                    onclick="showDateRangeExport()"
+                  >
+                    <i class="fas fa-calendar-week me-2"></i>Date Range Report
+                  </a>
+                </li>
+                <li>
+                  <a
+                    class="dropdown-item"
+                    href="/export_attendance"
+                    target="_blank"
+                  >
+                    <i class="fas fa-download me-2"></i>Download Today's CSV
+                  </a>
+                </li>
+                <li>
+                  <a
+                    class="dropdown-item"
+                    href="#"
+                    onclick="exportCurrentView()"
+                  >
+                    <i class="fas fa-table me-2"></i>Export Current View
+                  </a>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Today's Attendance -->
+<div class="row">
+  <div class="col-md-8">
+    <div class="card">
+      <div class="card-header">
+        <h5 class="mb-0">
+          <i class="fas fa-calendar-check me-2"></i>Today's Attendance ({{
+          today.strftime('%B %d, %Y') }})
+        </h5>
+      </div>
+      <div class="card-body">
+        {% if today_attendance %}
+        <div class="table-responsive">
+          <table class="table table-hover">
+            <thead>
+              <tr>
+                <th>Student Name</th>
+                <th>Roll Number</th>
+                <th>Class</th>
+                <th>Time</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for attendance in today_attendance %}
+              <tr>
+                <td>{{ attendance.student.name }}</td>
+                <td>{{ attendance.student.roll_number }}</td>
+                <td>{{ attendance.student.class_name }}</td>
+                <td>{{ attendance.time.strftime('%H:%M:%S') }}</td>
+                <td>
+                  <span class="badge bg-success">Present</span>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="text-center py-4">
+          <i class="fas fa-calendar-times fa-3x text-muted mb-3"></i>
+          <p class="text-muted">No attendance records for today yet.</p>
+          <a href="{{ url_for('take_attendance') }}" class="btn btn-primary">
+            <i class="fas fa-camera me-2"></i>Start Taking Attendance
+          </a>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-header">
+        <h5 class="mb-0"><i class="fas fa-users me-2"></i>All Students</h5>
+      </div>
+      <div class="card-body">
+        {% if students %}
+        <div class="list-group list-group-flush">
+          {% for student in students %}
+          <div
+            class="list-group-item d-flex justify-content-between align-items-center"
+          >
+            <div>
+              <h6 class="mb-1">{{ student.name }}</h6>
+              <small class="text-muted"
+                >{{ student.roll_number }} • {{ student.class_name }}</small
+              >
+            </div>
+            {% set student_present = false %} {% for attendance in
+            today_attendance %} {% if attendance.student.id == student.id %} {%
+            set student_present = true %} {% endif %} {% endfor %} {% if
+            student_present %}
+            <span class="badge bg-success rounded-pill">Present</span>
+            {% else %}
+            <span class="badge bg-warning rounded-pill">Absent</span>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-4">
+          <i class="fas fa-user-plus fa-3x text-muted mb-3"></i>
+          <p class="text-muted">No students registered yet.</p>
+          <a href="{{ url_for('add_student') }}" class="btn btn-success">
+            <i class="fas fa-user-plus me-2"></i>Add First Student
+          </a>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Date Range Export Modal -->
+<div class="modal fade" id="dateRangeModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="fas fa-calendar-week me-2"></i>Export Date Range Report
+        </h5>
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="modal"
+        ></button>
+      </div>
+      <div class="modal-body">
+        <form id="dateRangeForm">
+          <div class="mb-3">
+            <label for="startDate" class="form-label">Start Date</label>
+            <input type="date" class="form-control" id="startDate" required />
+          </div>
+          <div class="mb-3">
+            <label for="endDate" class="form-label">End Date</label>
+            <input type="date" class="form-control" id="endDate" required />
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary"
+          onclick="exportDateRange()"
+        >
+          Export CSV
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %} {% block scripts %}
+<script>
+  // Store attendance data for export
+  const attendanceData = {
+    today: "{{ today.strftime('%Y-%m-%d') }}",
+    students: {{ students|tojson }},
+    todayAttendance: [
+      {% for attendance in today_attendance %}
+      {
+        student: {
+          name: "{{ attendance.student.name }}",
+          roll_number: "{{ attendance.student.roll_number }}",
+          class_name: "{{ attendance.student.class_name }}"
+        },
+        time: "{{ attendance.time.strftime('%H:%M:%S') }}",
+        status: "Present"
+      }{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ]
+  };
+
+  function exportAttendance() {
+    if (attendanceData.todayAttendance.length === 0 && attendanceData.students.length === 0) {
+      alert("No data available to export.");
+      return;
+    }
+
+    // Create CSV content
+    let csvContent = "Student Name,Roll Number,Class,Date,Time,Status\n";
+
+    // Add present students
+    attendanceData.todayAttendance.forEach(att => {
+      csvContent += `"${att.student.name}","${att.student.roll_number}","${att.student.class_name}","${attendanceData.today}","${att.time}","${att.status}"\n`;
+    });
+
+    // Add absent students
+    const presentStudentNames = new Set(attendanceData.todayAttendance.map(att => att.student.name));
+    attendanceData.students.forEach(student => {
+      if (!presentStudentNames.has(student.name)) {
+        csvContent += `"${student.name}","${student.roll_number}","${student.class_name}","${attendanceData.today}","","Absent"\n`;
+      }
+    });
+
+    // Create and download CSV file
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `attendance_${attendanceData.today}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    // Show success message
+    showSuccess("Attendance report exported successfully!");
+  }
+
+  // Simple success notification function
+  function showSuccess(message) {
+    const alertDiv = document.createElement('div');
+    alertDiv.className = 'alert alert-success alert-dismissible fade show';
+    alertDiv.innerHTML = `
+      <i class="fas fa-check-circle me-2"></i>${message}
+      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+
+    const container = document.querySelector('main.container');
+    container.insertBefore(alertDiv, container.firstChild);
+
+    // Auto-hide after 5 seconds
+    setTimeout(() => {
+      const bsAlert = new bootstrap.Alert(alertDiv);
+      bsAlert.close();
+    }, 5000);
+  }
+
+  // Show date range export modal
+  function showDateRangeExport() {
+    // Set default dates (last 7 days)
+    const today = new Date();
+    const lastWeek = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    document.getElementById('startDate').value = lastWeek.toISOString().split('T')[0];
+    document.getElementById('endDate').value = today.toISOString().split('T')[0];
+
+    const modal = new bootstrap.Modal(document.getElementById('dateRangeModal'));
+    modal.show();
+  }
+
+  // Export date range CSV
+  function exportDateRange() {
+    const startDate = document.getElementById('startDate').value;
+    const endDate = document.getElementById('endDate').value;
+
+    if (!startDate || !endDate) {
+      alert('Please select both start and end dates.');
+      return;
+    }
+
+    if (startDate > endDate) {
+      alert('Start date cannot be after end date.');
+      return;
+    }
+
+    // Close modal
+    const modal = bootstrap.Modal.getInstance(document.getElementById('dateRangeModal'));
+    modal.hide();
+
+    // Download CSV
+    const url = `/export_attendance_range?start_date=${startDate}&end_date=${endDate}`;
+    window.open(url, '_blank');
+
+    showSuccess("Date range report export started!");
+  }
+
+  // Export current view (what's visible on the dashboard)
+  function exportCurrentView() {
+    if (attendanceData.todayAttendance.length === 0) {
+      alert("No attendance data available to export.");
+      return;
+    }
+
+    // Create CSV content for current view
+    let csvContent = "Student Name,Roll Number,Class,Date,Time,Status\n";
+
+    // Add present students
+    attendanceData.todayAttendance.forEach(att => {
+      csvContent += `"${att.student.name}","${att.student.roll_number}","${att.student.class_name}","${attendanceData.today}","${att.time}","${att.status}"\n`;
+    });
+
+    // Create and download CSV file
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `attendance_current_view_${attendanceData.today}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    showSuccess("Current view exported successfully!");
+  }
+</script>
+{% endblock %}
