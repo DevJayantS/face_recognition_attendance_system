@@ -1,7 +1,19 @@
 Flask==2.3.3
 Flask-SQLAlchemy==3.0.5
 Werkzeug==2.3.7
+
+# Web servers (choose automatically by OS)
+gunicorn==21.2.0 ; platform_system != "Windows"
+waitress==2.1.2 ; platform_system == "Windows"
+
+# Computer vision stack
 opencv-python==4.8.1.78
+numpy>=1.24,<2.0
+Pillow>=10,<11
+
+# Face recognition stack
+# dlib wheel is widely available for Windows/Linux x64. For macOS arm64,
+# install dlib via system package manager if pip wheel is unavailable.
+dlib==19.24.2 ; platform_system != "Darwin" or platform_machine != "arm64"
 face-recognition==1.3.0
-numpy==1.24.3
-Pillow==10.0.1
+face-recognition-models==0.3.0

@@ -7,6 +7,9 @@ import face_recognition
 import numpy as np
 from datetime import datetime, timedelta
 import csv
+import base64
+import pickle
+import threading
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # Change this in production
@@ -73,11 +76,12 @@ class Attendance(db.Model):
     teacher_id = db.Column(db.Integer, db.ForeignKey('teacher.id'), nullable=False)
     student = db.relationship('Student', backref='attendance_records')
 
-# Load known face encodings
+# Load known face encodings with improved accuracy
 def load_known_faces():
     dataset_path = "dataset"
     known_encodings = []
     known_names = []
+    student_encodings = {}  # Store multiple encodings per student
     
     for student_name in os.listdir(dataset_path):
         student_folder = os.path.join(dataset_path, student_name)
@@ -85,6 +89,11 @@ def load_known_faces():
         if not os.path.isdir(student_folder):
             continue
         
+        student_encodings[student_name] = []
+        
+        loaded_count = 0
+        skipped_count = 0
+        # Process all images for each student
         for file in os.listdir(student_folder):
             if file.endswith((".jpg", ".png")):
                 img_path = os.path.join(student_folder, file)
@@ -92,14 +101,206 @@ def load_known_faces():
                 if img is None:
                     continue
                 
+                # Resize large images for better processing
+                height, width = img.shape[:2]
+                if max(height, width) > 1280:
+                    scale = 1280 / max(height, width)
+                    new_width = int(width * scale)
+                    new_height = int(height * scale)
+                    img = cv2.resize(img, (new_width, new_height))
+                
                 rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                encodings = face_recognition.face_encodings(rgb_img)
-                if len(encodings) > 0:
-                    known_encodings.append(encodings[0])
-                    known_names.append(student_name)
-                    break  # Only need one image per student
+
+                # Try multiple face detection strategies
+                face_locations = face_recognition.face_locations(rgb_img, model="hog", number_of_times_to_upsample=1)
+                if len(face_locations) == 0:
+                    face_locations = face_recognition.face_locations(rgb_img, model="hog", number_of_times_to_upsample=2)
+                if len(face_locations) == 0:
+                    try:
+                        face_locations = face_recognition.face_locations(rgb_img, model="cnn", number_of_times_to_upsample=0)
+                    except Exception:
+                        face_locations = []
+
+                if len(face_locations) > 0:
+                    # If multiple faces, use the largest one
+                    if len(face_locations) > 1:
+                        def face_area(face_location):
+                            top, right, bottom, left = face_location
+                            return (bottom - top) * (right - left)
+                        face_locations = [max(face_locations, key=face_area)]
+                    
+                    encodings = face_recognition.face_encodings(rgb_img, face_locations)
+                    if len(encodings) > 0:
+                        student_encodings[student_name].append(encodings[0])
+                        loaded_count += 1
+                    else:
+                        skipped_count += 1
+                else:
+                    skipped_count += 1
+        print(f"ℹ️  Loaded encodings for {student_name}: {loaded_count} images, skipped {skipped_count}")
     
+    # Add all encodings to the main lists
+    for student_name, encodings in student_encodings.items():
+        if encodings:  # Only add if we have at least one encoding
+            for encoding in encodings:
+                known_encodings.append(encoding)
+                known_names.append(student_name)
+    
+    print(f"✅ Loaded {len(set(known_names))} students with {len(known_encodings)} total encodings")
     return known_encodings, known_names
+
+# Improved face recognition with confidence scoring
+def recognize_face_with_confidence(face_encoding, known_encodings, known_names, confidence_threshold=0.6):
+    """
+    Recognize a face with confidence scoring
+    Returns (name, confidence) or (None, 0) if below threshold
+    """
+    if len(known_encodings) == 0:
+        return None, 0
+    
+    # Calculate face distances
+    face_distances = face_recognition.face_distance(known_encodings, face_encoding)
+    
+    # Find the best match
+    best_match_index = np.argmin(face_distances)
+    best_distance = face_distances[best_match_index]
+    
+    # Convert distance to confidence (0-1 scale, higher is better)
+    # face_recognition uses 0.6 as default threshold, so we'll use that as our baseline
+    confidence = max(0, 1 - (best_distance / 0.6))
+    
+    if confidence >= confidence_threshold:
+        return known_names[best_match_index], confidence
+    else:
+        return None, confidence
+
+# Cache known faces to avoid re-loading on every request
+KNOWN_FACE_DATA = {
+    'encodings': [],
+    'names': [],
+    'dataset_mtime': 0.0,
+    'encodings_pkl': 'encodings.pkl',
+    'is_loading': False
+}
+_LOAD_LOCK = threading.Lock()
+
+def get_dataset_mtime(path="dataset"):
+    try:
+        latest = os.path.getmtime(path)
+        for root, dirs, files in os.walk(path):
+            for name in files:
+                try:
+                    latest = max(latest, os.path.getmtime(os.path.join(root, name)))
+                except Exception:
+                    pass
+        return latest
+    except Exception:
+        return 0.0
+
+def ensure_known_faces_loaded():
+    current_mtime = get_dataset_mtime()
+    need_reload = (
+        not KNOWN_FACE_DATA['encodings'] or not KNOWN_FACE_DATA['names'] or
+        current_mtime > KNOWN_FACE_DATA['dataset_mtime']
+    )
+
+    if not need_reload:
+        return KNOWN_FACE_DATA['encodings'], KNOWN_FACE_DATA['names']
+
+    with _LOAD_LOCK:
+        # Re-check inside lock
+        current_mtime = get_dataset_mtime()
+        need_reload = (
+            not KNOWN_FACE_DATA['encodings'] or not KNOWN_FACE_DATA['names'] or
+            current_mtime > KNOWN_FACE_DATA['dataset_mtime']
+        )
+        if not need_reload:
+            return KNOWN_FACE_DATA['encodings'], KNOWN_FACE_DATA['names']
+
+        KNOWN_FACE_DATA['is_loading'] = True
+        try:
+            # Try loading from pickle if fresh
+            pkl_path = KNOWN_FACE_DATA['encodings_pkl']
+            try:
+                pkl_mtime = os.path.getmtime(pkl_path)
+            except Exception:
+                pkl_mtime = 0.0
+
+            if pkl_mtime >= current_mtime and os.path.exists(pkl_path):
+                with open(pkl_path, 'rb') as f:
+                    data = pickle.load(f)
+                encs = data.get('encodings', [])
+                names = data.get('names', [])
+                print(f"✅ Loaded encodings from {pkl_path} ({len(set(names))} students, {len(encs)} encodings)")
+            else:
+                encs, names = load_known_faces()
+                # Save to pickle for future fast starts
+                try:
+                    with open(pkl_path, 'wb') as f:
+                        pickle.dump({'encodings': encs, 'names': names}, f)
+                    print(f"💾 Saved encodings to {pkl_path}")
+                except Exception as e:
+                    print(f"⚠️  Could not save encodings to pickle: {e}")
+
+            KNOWN_FACE_DATA['encodings'] = encs
+            KNOWN_FACE_DATA['names'] = names
+            KNOWN_FACE_DATA['dataset_mtime'] = current_mtime
+        finally:
+            KNOWN_FACE_DATA['is_loading'] = False
+
+    return KNOWN_FACE_DATA['encodings'], KNOWN_FACE_DATA['names']
+
+@app.route('/api/recognize', methods=['POST'])
+def api_recognize():
+    if not validate_session():
+        return jsonify({'error': 'Not authenticated'}), 401
+    try:
+        data = request.get_json(silent=True) or {}
+        image_data_url = data.get('image')
+        if not image_data_url or not isinstance(image_data_url, str):
+            return jsonify({'error': 'No image provided'}), 400
+
+        # Strip data URL header if present
+        if ',' in image_data_url:
+            image_b64 = image_data_url.split(',', 1)[1]
+        else:
+            image_b64 = image_data_url
+
+        image_bytes = base64.b64decode(image_b64)
+        np_arr = np.frombuffer(image_bytes, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        if frame is None:
+            return jsonify({'error': 'Invalid image data'}), 400
+
+        # Lean fast-path detection: assume client already downscaled
+        rgb_small = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        face_locations = face_recognition.face_locations(rgb_small, number_of_times_to_upsample=1, model="hog")
+        if not face_locations:
+            # One extra upsample pass as fallback
+            face_locations = face_recognition.face_locations(rgb_small, number_of_times_to_upsample=2, model="hog")
+        face_encodings = face_recognition.face_encodings(rgb_small, face_locations)
+
+        known_encodings, known_names = ensure_known_faces_loaded()
+
+        detections = []
+        for face_encoding, face_location in zip(face_encodings, face_locations):
+            name, confidence = recognize_face_with_confidence(
+                face_encoding,
+                known_encodings,
+                known_names,
+                confidence_threshold=0.55
+            )
+            if name is None:
+                name = 'Unknown'
+                confidence = float(confidence)
+            detections.append({
+                'name': name,
+                'confidence': float(confidence)
+            })
+
+        return jsonify({'success': True, 'detections': detections})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/')
 def index():
@@ -448,4 +649,5 @@ if __name__ == '__main__':
             db.session.commit()
             print("Default teacher created: username='admin', password='admin123'")
     
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Disable reloader/threaded mode to avoid native lib crashes with dlib/OpenCV
+    app.run(debug=False, use_reloader=False, threaded=False, host='0.0.0.0', port=5000)

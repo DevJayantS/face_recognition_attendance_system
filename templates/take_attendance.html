@@ -191,34 +191,82 @@ System{% endblock %} {% block content %}
   });
 
   // Capture attendance
-  captureButton.addEventListener('click', () => {
+  let captureInFlight = false;
+
+  captureButton.addEventListener('click', async () => {
       if (!stream) {
           alert('Please start the camera first');
           return;
       }
 
-      // Simulate face recognition (in real implementation, this would use your Python backend)
-      simulateFaceRecognition();
-  });
+      if (captureInFlight) return;
+      captureInFlight = true;
+      const originalText = captureButton.innerHTML;
+      captureButton.disabled = true;
+      captureButton.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Recognizing...';
 
-  function simulateFaceRecognition() {
-      // This is a simulation - in real implementation, you'd send the video frame to your Python backend
-      // For now, we'll simulate detecting some students
+      // Draw current frame to canvas
+      const ctx = canvas.getContext('2d');
+      // Downscale frame before sending to reduce bandwidth and CPU
+      const vw = video.videoWidth || 640;
+      const vh = video.videoHeight || 480;
+      const targetW = 320; // client resize for faster server processing
+      const scale = targetW / vw;
+      canvas.width = Math.round(vw * scale);
+      canvas.height = Math.round(vh * scale);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
 
-      const students = {{ students|tojson }};
+      // Send frame to backend for recognition
+      try {
+          const resp = await fetch('/api/recognize', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ image: dataUrl })
+          });
 
-      if (!students || students.length === 0) {
-          alert('No students found in the system. Please add students first.');
-          return;
+          if (!resp.ok) {
+              const text = await resp.text();
+              alert('Recognition request failed: ' + text);
+              return;
+          }
+
+          let result;
+          const ct = resp.headers.get('content-type') || '';
+          if (ct.includes('application/json')) {
+              result = await resp.json();
+          } else {
+              const text = await resp.text();
+              alert('Unexpected response from server: ' + text);
+              return;
+          }
+
+          if (!result.success) {
+              alert('Recognition error: ' + (result.error || 'Unknown error'));
+              return;
+          }
+
+          // Map detections to student objects known to the page
+          const students = {{ students|tojson }};
+          const byName = Object.fromEntries(students.map(s => [s.name, s]));
+          const matched = [];
+          result.detections.forEach(d => {
+              if (d.name && d.name !== 'Unknown' && byName[d.name]) {
+                  matched.push(byName[d.name]);
+              }
+          });
+
+          detectedStudents = matched;
+          showAttendanceResults(matched);
+      } catch (e) {
+          console.error(e);
+          alert('Failed to contact recognition API');
+      } finally {
+          captureInFlight = false;
+          captureButton.disabled = false;
+          captureButton.innerHTML = originalText;
       }
-
-      const randomStudents = students.sort(() => 0.5 - Math.random()).slice(0, Math.floor(Math.random() * 3) + 1);
-
-      detectedStudents = randomStudents;
-
-      // Show results in modal
-      showAttendanceResults(randomStudents);
-  }
+  });
 
   function showAttendanceResults(students) {
       const resultsDiv = document.getElementById('attendance-results');
