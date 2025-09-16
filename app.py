@@ -11,6 +11,7 @@ import base64
 import pickle
 import threading
 from io import BytesIO
+import shutil
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # Change this in production
@@ -891,7 +892,9 @@ def export_attendance_range_excel():
 
 @app.route('/export_attendance_range_graph')
 def export_attendance_range_graph():
-    if not validate_session():
+    # Allow teacher OR student to download graph
+    if not (validate_session() or validate_student_session()):
+        # If neither session is valid, send to login
         return redirect(url_for('login'))
 
     start_date = request.args.get('start_date')
@@ -1022,6 +1025,45 @@ def add_student():
         return redirect(url_for('dashboard'))
     
     return render_template('add_student.html')
+
+@app.route('/remove_student', methods=['POST'])
+def remove_student():
+    if not validate_session():
+        return redirect(url_for('login'))
+    try:
+        student_id = request.form.get('student_id')
+        if not student_id:
+            flash('No student selected', 'error')
+            return redirect(url_for('dashboard'))
+        student = Student.query.get(int(student_id))
+        if not student:
+            flash('Student not found', 'error')
+            return redirect(url_for('dashboard'))
+
+        # Delete attendance records for this student
+        Attendance.query.filter_by(student_id=student.id).delete()
+        # Delete student entry
+        db.session.delete(student)
+        db.session.commit()
+
+        # Remove dataset folder if exists
+        dataset_folder = os.path.join('dataset', student.name)
+        try:
+            if os.path.isdir(dataset_folder):
+                shutil.rmtree(dataset_folder)
+        except Exception as e:
+            print(f"⚠️  Could not remove dataset folder {dataset_folder}: {e}")
+
+        # Invalidate encodings cache
+        KNOWN_FACE_DATA['encodings'] = []
+        KNOWN_FACE_DATA['names'] = []
+        KNOWN_FACE_DATA['dataset_mtime'] = 0.0
+        flash('Student removed successfully', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash('Failed to remove student', 'error')
+        print(f"ERROR: remove_student failed: {e}")
+    return redirect(url_for('dashboard'))
 
 if __name__ == '__main__':
     with app.app_context():

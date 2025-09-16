@@ -259,7 +259,15 @@ endblock %} {% block content %}
             student_present %}
             <span class="badge bg-success rounded-pill">Present</span>
             {% else %}
-            <span class="badge bg-warning rounded-pill">Absent</span>
+            <div class="d-flex align-items-center gap-2">
+              <span class="badge bg-warning rounded-pill">Absent</span>
+              <form method="POST" action="{{ url_for('remove_student') }}" onsubmit="return confirm('Remove {{ student.name }}? This will delete their records and dataset.');">
+                <input type="hidden" name="student_id" value="{{ student.id }}" />
+                <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove Student">
+                  <i class="fas fa-user-minus"></i>
+                </button>
+              </form>
+            </div>
             {% endif %}
           </div>
           {% endfor %}
