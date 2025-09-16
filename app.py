@@ -46,6 +46,28 @@ def validate_session():
             return False
     return False
 
+def validate_student_session():
+    """Validate student session without exposing teacher privileges"""
+    if 'student_id' in session and 'student_login_time' in session:
+        try:
+            login_time = datetime.fromisoformat(session['student_login_time'])
+            if datetime.now() - login_time > timedelta(hours=8):
+                session.pop('student_id', None)
+                session.pop('student_name', None)
+                session.pop('student_login_time', None)
+                return False
+            # light refresh
+            if datetime.now() - login_time > timedelta(hours=2):
+                session['student_login_time'] = datetime.now().isoformat()
+                session.modified = True
+            return True
+        except Exception:
+            session.pop('student_id', None)
+            session.pop('student_name', None)
+            session.pop('student_login_time', None)
+            return False
+    return False
+
 # Database Models
 class Teacher(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -347,6 +369,8 @@ def api_recognize():
 def index():
     if 'teacher_id' in session:
         return redirect(url_for('dashboard'))
+    if 'student_id' in session:
+        return redirect(url_for('student_dashboard'))
     return render_template('index.html')
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -386,6 +410,68 @@ def logout():
         session.clear()
         flash('Logged out successfully!', 'success')
     return redirect(url_for('index'))
+
+@app.route('/student_login', methods=['GET', 'POST'])
+def student_login():
+    # Clear teacher session on student login page to avoid conflicts
+    session.pop('teacher_id', None)
+    session.pop('teacher_name', None)
+    if request.method == 'POST':
+        roll_number = request.form.get('roll_number', '').strip()
+        name = request.form.get('name', '').strip()
+        if not roll_number:
+            flash('Please enter your roll number', 'error')
+            return render_template('student_login.html')
+        # Basic lookup; optional name check to reduce mistakes
+        query = Student.query.filter_by(roll_number=roll_number)
+        if name:
+            query = query.filter_by(name=name)
+        student = query.first()
+        if not student:
+            flash('Student not found. Please check your details.', 'error')
+            return render_template('student_login.html')
+        session['student_id'] = student.id
+        session['student_name'] = student.name
+        session['student_login_time'] = datetime.now().isoformat()
+        session.modified = True
+        return redirect(url_for('student_dashboard'))
+    return render_template('student_login.html')
+
+@app.route('/student_logout')
+def student_logout():
+    session.pop('student_id', None)
+    session.pop('student_name', None)
+    session.pop('student_login_time', None)
+    flash('Logged out successfully!', 'success')
+    return redirect(url_for('index'))
+
+@app.route('/student_dashboard')
+def student_dashboard():
+    if not validate_student_session():
+        return redirect(url_for('student_login'))
+    student = Student.query.get(session['student_id'])
+    if not student:
+        return redirect(url_for('student_login'))
+    # Attendance stats
+    all_records = Attendance.query.filter_by(student_id=student.id).order_by(Attendance.date.desc(), Attendance.time.desc()).all()
+    present_days_total = len({(att.date) for att in all_records})
+    # Last 30 days context
+    start_30 = datetime.now().date() - timedelta(days=29)
+    last30_records = [att for att in all_records if att.date >= start_30]
+    present_days_last30 = len({att.date for att in last30_records})
+    # Determine total class days in last30 by using union of all attendance dates across students
+    all_last30 = Attendance.query.filter(Attendance.date >= start_30).all()
+    class_days_last30 = len({att.date for att in all_last30}) or 0
+    percentage_last30 = (present_days_last30 / class_days_last30 * 100.0) if class_days_last30 else 0.0
+    return render_template(
+        'student_dashboard.html',
+        student=student,
+        all_records=all_records[:50],  # show recent 50 records
+        present_days_total=present_days_total,
+        present_days_last30=present_days_last30,
+        class_days_last30=class_days_last30,
+        percentage_last30=percentage_last30,
+    )
 
 @app.route('/debug_session')
 def debug_session():
