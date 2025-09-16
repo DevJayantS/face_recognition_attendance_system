@@ -210,12 +210,12 @@ System{% endblock %} {% block content %}
       // Downscale frame before sending to reduce bandwidth and CPU
       const vw = video.videoWidth || 640;
       const vh = video.videoHeight || 480;
-      const targetW = 320; // client resize for faster server processing
+      const targetW = 480; // use larger frame to improve detection stability
       const scale = targetW / vw;
       canvas.width = Math.round(vw * scale);
       canvas.height = Math.round(vh * scale);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
 
       // Send frame to backend for recognition
       try {

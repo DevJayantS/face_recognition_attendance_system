@@ -36,7 +36,8 @@ body {
 }
 
 .card:hover {
-  transform: translateY(-2px);
+  /* Avoid transform to prevent new stacking contexts that can cover dropdowns */
+  transform: none;
   box-shadow: 0 8px 15px rgba(0, 0, 0, 0.15);
 }
 
@@ -179,6 +180,27 @@ body {
 .modal-footer {
   border-top: 1px solid #e9ecef;
   border-radius: 0 0 12px 12px;
+}
+
+/* Fix: dropdown menus overlap/are hidden by cards */
+.card,
+.card .card-body {
+  overflow: visible;
+}
+
+.dropdown-menu {
+  z-index: 5000 !important; /* ensure above cards */
+}
+
+.dropdown-menu.show {
+  margin-top: 6px;
+}
+
+/* Avoid clipping by tables or list containers near the dropdown */
+.table,
+.list-group,
+.list-group-item {
+  overflow: visible;
 }
 
 /* Responsive adjustments */

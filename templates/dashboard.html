@@ -133,6 +133,15 @@ endblock %} {% block content %}
                 <li>
                   <a
                     class="dropdown-item"
+                    href="/export_attendance_excel"
+                    target="_blank"
+                  >
+                    <i class="fas fa-file-excel me-2"></i>Today's Excel (.xlsx)
+                  </a>
+                </li>
+                <li>
+                  <a
+                    class="dropdown-item"
                     href="#"
                     onclick="showDateRangeExport()"
                   >
@@ -220,7 +229,16 @@ endblock %} {% block content %}
   <div class="col-md-4">
     <div class="card">
       <div class="card-header">
-        <h5 class="mb-0"><i class="fas fa-users me-2"></i>All Students</h5>
+        <div class="d-flex justify-content-between align-items-center">
+          <h5 class="mb-0"><i class="fas fa-users me-2"></i>All Students</h5>
+          <button
+            class="btn btn-sm btn-outline-primary"
+            data-bs-toggle="modal"
+            data-bs-target="#manualMarkModal"
+          >
+            <i class="fas fa-user-check me-1"></i>Manual Mark
+          </button>
+        </div>
       </div>
       <div class="card-body">
         {% if students %}
@@ -284,6 +302,19 @@ endblock %} {% block content %}
             <label for="endDate" class="form-label">End Date</label>
             <input type="date" class="form-control" id="endDate" required />
           </div>
+          <div class="mb-2">
+            <div class="form-check">
+              <input
+                class="form-check-input"
+                type="checkbox"
+                value="1"
+                id="excelCheckbox"
+              />
+              <label class="form-check-label" for="excelCheckbox">
+                Export as Excel (.xlsx)
+              </label>
+            </div>
+          </div>
         </form>
       </div>
       <div class="modal-footer">
@@ -295,9 +326,67 @@ endblock %} {% block content %}
           class="btn btn-primary"
           onclick="exportDateRange()"
         >
-          Export CSV
+          Export CSV / Excel
+        </button>
+        <button
+          type="button"
+          class="btn btn-outline-info"
+          onclick="downloadDateRangeGraph()"
+        >
+          Download Graph (PNG)
         </button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Manual Mark Modal -->
+<div class="modal fade" id="manualMarkModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="POST" action="{{ url_for('manual_mark') }}">
+        <div class="modal-header">
+          <h5 class="modal-title">
+            <i class="fas fa-user-check me-2"></i>Manual Attendance
+          </h5>
+          <button
+            type="button"
+            class="btn-close"
+            data-bs-dismiss="modal"
+          ></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="studentSelect" class="form-label">Select Student</label>
+            <select
+              class="form-select"
+              id="studentSelect"
+              name="student_id"
+              required
+            >
+              <option value="" selected disabled>Choose a student</option>
+              {% for s in students %}
+              <option value="{{ s.id }}">
+                {{ s.name }} — {{ s.roll_number }} ({{ s.class_name }})
+              </option>
+              {% endfor %}
+            </select>
+            <div class="form-text">
+              Marks present for today with current time.
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            data-bs-dismiss="modal"
+          >
+            Cancel
+          </button>
+          <button type="submit" class="btn btn-primary">Mark Present</button>
+        </div>
+      </form>
     </div>
   </div>
 </div>
@@ -395,6 +484,7 @@ endblock %} {% block content %}
   function exportDateRange() {
     const startDate = document.getElementById('startDate').value;
     const endDate = document.getElementById('endDate').value;
+    const asExcel = document.getElementById('excelCheckbox').checked;
 
     if (!startDate || !endDate) {
       alert('Please select both start and end dates.');
@@ -411,10 +501,28 @@ endblock %} {% block content %}
     modal.hide();
 
     // Download CSV
-    const url = `/export_attendance_range?start_date=${startDate}&end_date=${endDate}`;
+    const url = asExcel
+      ? `/export_attendance_range_excel?start_date=${startDate}&end_date=${endDate}`
+      : `/export_attendance_range?start_date=${startDate}&end_date=${endDate}`;
     window.open(url, '_blank');
 
-    showSuccess("Date range report export started!");
+    showSuccess(asExcel ? "Excel export started!" : "Date range report export started!");
+  }
+
+  function downloadDateRangeGraph() {
+    const startDate = document.getElementById('startDate').value;
+    const endDate = document.getElementById('endDate').value;
+    if (!startDate || !endDate) {
+      alert('Please select both start and end dates.');
+      return;
+    }
+    if (startDate > endDate) {
+      alert('Start date cannot be after end date.');
+      return;
+    }
+    const url = `/export_attendance_range_graph?start_date=${startDate}&end_date=${endDate}`;
+    window.open(url, '_blank');
+    showSuccess('Graph export started!');
   }
 
   // Export current view (what's visible on the dashboard)
@@ -444,6 +552,22 @@ endblock %} {% block content %}
     document.body.removeChild(link);
 
     showSuccess("Current view exported successfully!");
+  }
+
+  // Optional: expose manual mark via fetch for future use
+  async function manualMarkApi(studentId) {
+    const resp = await fetch('/api/manual_mark', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ student_id: studentId })
+    });
+    const data = await resp.json();
+    if (data.success) {
+      showSuccess(data.message || 'Student marked present');
+      location.reload();
+    } else {
+      alert(data.error || 'Failed to mark attendance');
+    }
   }
 </script>
 {% endblock %}

@@ -1,17 +1,17 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 echo "🚀 Starting AI Attendance System..."
 echo "=================================="
 
 # Check if Python 3 is installed
-if ! command -v python3 &> /dev/null; then
+if ! command -v python3 >/dev/null 2>&1; then
     echo "❌ Python 3 is not installed. Please install Python 3.8 or higher."
     exit 1
 fi
 
 # Check if requirements are installed
 echo "📦 Checking dependencies..."
-if ! python3 -c "import flask, cv2, face_recognition" &> /dev/null; then
+if ! python3 -c "import flask, cv2, face_recognition, openpyxl" >/dev/null 2>&1; then
     echo "⚠️  Some dependencies are missing. Installing requirements..."
     pip3 install -r requirements.txt
 fi

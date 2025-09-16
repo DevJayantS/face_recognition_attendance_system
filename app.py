@@ -10,6 +10,7 @@ import csv
 import base64
 import pickle
 import threading
+from io import BytesIO
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # Change this in production
@@ -271,6 +272,16 @@ def api_recognize():
         frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         if frame is None:
             return jsonify({'error': 'Invalid image data'}), 400
+        h, w = frame.shape[:2]
+        print(f"DEBUG: Decoded frame {w}x{h}")
+
+        # If the frame is very small, upscale before detection
+        if max(h, w) < 400:
+            scale = 400.0 / max(h, w)
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+            print(f"DEBUG: Upscaled frame to {new_w}x{new_h}")
 
         # Lean fast-path detection: assume client already downscaled
         rgb_small = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -278,21 +289,51 @@ def api_recognize():
         if not face_locations:
             # One extra upsample pass as fallback
             face_locations = face_recognition.face_locations(rgb_small, number_of_times_to_upsample=2, model="hog")
+        if not face_locations:
+            # Last resort: try at slightly larger scale
+            try:
+                bigger = cv2.resize(rgb_small, (0, 0), fx=1.25, fy=1.25)
+                face_locations = face_recognition.face_locations(bigger, number_of_times_to_upsample=2, model="hog")
+                if face_locations:
+                    rgb_small = bigger
+            except Exception:
+                pass
+
+        # If still nothing, try light enhancement (CLAHE on Y channel)
+        if not face_locations:
+            try:
+                yuv = cv2.cvtColor(frame, cv2.COLOR_BGR2YUV)
+                y, u, v = cv2.split(yuv)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                y_eq = clahe.apply(y)
+                yuv_eq = cv2.merge((y_eq, u, v))
+                bgr_eq = cv2.cvtColor(yuv_eq, cv2.COLOR_YUV2BGR)
+                rgb_eq = cv2.cvtColor(bgr_eq, cv2.COLOR_BGR2RGB)
+                face_locations = face_recognition.face_locations(rgb_eq, number_of_times_to_upsample=2, model="hog")
+                if face_locations:
+                    rgb_small = rgb_eq
+            except Exception:
+                pass
+
         face_encodings = face_recognition.face_encodings(rgb_small, face_locations)
 
         known_encodings, known_names = ensure_known_faces_loaded()
 
         detections = []
+        print(f"DEBUG: /api/recognize faces={len(face_locations)}")
         for face_encoding, face_location in zip(face_encodings, face_locations):
             name, confidence = recognize_face_with_confidence(
                 face_encoding,
                 known_encodings,
                 known_names,
-                confidence_threshold=0.55
+                confidence_threshold=0.50
             )
             if name is None:
                 name = 'Unknown'
                 confidence = float(confidence)
+            else:
+                # Log best match for debugging
+                print(f"DEBUG: matched name={name} conf={confidence:.2f}")
             detections.append({
                 'name': name,
                 'confidence': float(confidence)
@@ -415,25 +456,30 @@ def process_attendance():
         return jsonify({'error': 'Not authenticated'}), 401
     
     try:
-        # Load known faces
-        known_encodings, known_names = load_known_faces()
+        payload = request.get_json(silent=True) or {}
+        # Support both current and legacy keys
+        detected_students = payload.get('detected_students') or payload.get('recognized') or payload.get('detections') or []
+        if not isinstance(detected_students, list):
+            return jsonify({'error': 'Invalid payload: expected list of students'}), 400
         
-        # Get camera frame (this would need to be implemented with proper camera access)
-        # For now, we'll simulate the process
+        # Normalize to list of names (client may send objects)
+        normalized_names = []
+        for item in detected_students:
+            if isinstance(item, dict):
+                # Accept {name: str} or full student object
+                name = item.get('name') if 'name' in item else None
+                if name:
+                    normalized_names.append(name)
+            elif isinstance(item, str):
+                normalized_names.append(item)
         
-        # Mark attendance for detected students
-        detected_students = request.json.get('detected_students', [])
+        if not normalized_names:
+            return jsonify({'success': True, 'message': 'No students to mark', 'marked_count': 0})
         today = datetime.now().date()
         current_time = datetime.now().time()
         
         marked_count = 0
-        for student_data in detected_students:
-            # Handle both string names and dictionary objects
-            if isinstance(student_data, dict):
-                student_name = student_data.get('name')
-            else:
-                student_name = student_data
-                
+        for student_name in normalized_names:
             student = Student.query.filter_by(name=student_name).first()
             if student:
                 # Check if attendance already marked
@@ -462,6 +508,75 @@ def process_attendance():
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/manual_mark', methods=['POST'])
+def manual_mark():
+    if not validate_session():
+        return redirect(url_for('login'))
+
+    try:
+        # Prefer form submission from dashboard; fallback to JSON body
+        student_id = request.form.get('student_id')
+        student_name = request.form.get('student_name')
+
+        if not student_id and not student_name:
+            data = request.get_json(silent=True) or {}
+            student_id = data.get('student_id')
+            student_name = data.get('student_name') or data.get('name')
+
+        student = None
+        if student_id:
+            try:
+                student = Student.query.get(int(student_id))
+            except Exception:
+                student = None
+        if student is None and student_name:
+            student = Student.query.filter_by(name=student_name).first()
+
+        if not student:
+            if request.is_json:
+                return jsonify({'success': False, 'error': 'Student not found'}), 404
+            flash('Student not found', 'error')
+            return redirect(url_for('dashboard'))
+
+        today = datetime.now().date()
+        current_time = datetime.now().time()
+
+        existing = Attendance.query.filter_by(student_id=student.id, date=today).first()
+        if existing:
+            if request.is_json:
+                return jsonify({'success': True, 'message': 'Attendance already marked'}), 200
+            flash(f'Attendance already marked for {student.name}', 'info')
+            return redirect(url_for('dashboard'))
+
+        attendance = Attendance(
+            student_id=student.id,
+            date=today,
+            time=current_time,
+            teacher_id=session['teacher_id']
+        )
+        db.session.add(attendance)
+        db.session.commit()
+
+        if request.is_json:
+            return jsonify({'success': True, 'message': f'Marked present: {student.name}'}), 200
+        flash(f'Marked present: {student.name}', 'success')
+        return redirect(url_for('dashboard'))
+    except Exception as e:
+        if request.is_json:
+            return jsonify({'success': False, 'error': str(e)}), 500
+        flash('Failed to mark attendance manually', 'error')
+        return redirect(url_for('dashboard'))
+
+@app.route('/api/manual_mark', methods=['POST'])
+def api_manual_mark():
+    if not validate_session():
+        return jsonify({'error': 'Not authenticated'}), 401
+
+    data = request.get_json(silent=True) or {}
+    # Delegate to manual_mark logic by simulating JSON path
+    with app.test_request_context(json=data):
+        return manual_mark()
 
 @app.route('/export_attendance')
 def export_attendance():
@@ -495,6 +610,59 @@ def export_attendance():
     response.headers['Content-Disposition'] = f'attachment; filename=attendance_{today.strftime("%Y-%m-%d")}.csv'
     
     return response
+
+@app.route('/export_attendance_excel')
+def export_attendance_excel():
+    if not validate_session():
+        return redirect(url_for('login'))
+    try:
+        # Lazy import to keep startup fast
+        import openpyxl
+        from openpyxl.utils import get_column_letter
+
+        today = datetime.now().date()
+        today_attendance = Attendance.query.filter_by(date=today).all()
+        all_students = Student.query.all()
+        present_student_ids = {att.student_id for att in today_attendance}
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"Attendance {today.strftime('%Y-%m-%d')}"
+
+        headers = ["Student Name", "Roll Number", "Class", "Date", "Time", "Status"]
+        ws.append(headers)
+
+        for attendance in today_attendance:
+            s = attendance.student
+            ws.append([s.name, s.roll_number, s.class_name, today.strftime('%Y-%m-%d'), attendance.time.strftime('%H:%M:%S'), 'Present'])
+
+        for s in all_students:
+            if s.id not in present_student_ids:
+                ws.append([s.name, s.roll_number, s.class_name, today.strftime('%Y-%m-%d'), '', 'Absent'])
+
+        # Auto width
+        for col in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            for cell in col:
+                try:
+                    max_len = max(max_len, len(str(cell.value)))
+                except Exception:
+                    pass
+            ws.column_dimensions[col_letter].width = min(max_len + 2, 40)
+
+        bio = BytesIO()
+        wb.save(bio)
+        bio.seek(0)
+        from flask import send_file
+        filename = f"attendance_{today.strftime('%Y-%m-%d')}.xlsx"
+        return send_file(bio, as_attachment=True, download_name=filename, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    except ImportError as e:
+        print(f"ERROR: openpyxl import failed: {e}")
+        return jsonify({'error': 'Excel support not installed. Run: pip install openpyxl'}), 500
+    except Exception as e:
+        print(f"ERROR: export_attendance_excel failed: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/export_attendance_range')
 def export_attendance_range():
@@ -559,6 +727,142 @@ def export_attendance_range():
     response.headers['Content-Disposition'] = f'attachment; filename={filename}'
     
     return response
+
+@app.route('/export_attendance_range_excel')
+def export_attendance_range_excel():
+    if not validate_session():
+        return redirect(url_for('login'))
+    try:
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+        if not start_date or not end_date:
+            return jsonify({'error': 'Start date and end date are required'}), 400
+
+        try:
+            start_date_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
+            end_date_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
+        except ValueError:
+            return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+        import openpyxl
+        from openpyxl.utils import get_column_letter
+
+        attendance_records = Attendance.query.filter(
+            Attendance.date >= start_date_dt,
+            Attendance.date <= end_date_dt
+        ).order_by(Attendance.date, Attendance.time).all()
+
+        all_students = Student.query.all()
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"{start_date_dt.strftime('%Y-%m-%d')} to {end_date_dt.strftime('%Y-%m-%d')}"
+
+        headers = ["Student Name", "Roll Number", "Class", "Date", "Time", "Status"]
+        ws.append(headers)
+
+        attendance_by_date = {}
+        for att in attendance_records:
+            date_str = att.date.strftime('%Y-%m-%d')
+            attendance_by_date.setdefault(date_str, []).append(att)
+
+        current_date = start_date_dt
+        while current_date <= end_date_dt:
+            date_str = current_date.strftime('%Y-%m-%d')
+            present_ids = {att.student_id for att in attendance_by_date.get(date_str, [])}
+
+            for att in attendance_by_date.get(date_str, []):
+                s = att.student
+                ws.append([s.name, s.roll_number, s.class_name, date_str, att.time.strftime('%H:%M:%S'), 'Present'])
+
+            for s in all_students:
+                if s.id not in present_ids:
+                    ws.append([s.name, s.roll_number, s.class_name, date_str, '', 'Absent'])
+
+            current_date = current_date + timedelta(days=1)
+
+        for col in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            for cell in col:
+                try:
+                    max_len = max(max_len, len(str(cell.value)))
+                except Exception:
+                    pass
+            ws.column_dimensions[col_letter].width = min(max_len + 2, 40)
+
+        bio = BytesIO()
+        wb.save(bio)
+        bio.seek(0)
+        from flask import send_file
+        filename = f"attendance_{start_date_dt.strftime('%Y-%m-%d')}_to_{end_date_dt.strftime('%Y-%m-%d')}.xlsx"
+        return send_file(bio, as_attachment=True, download_name=filename, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    except ImportError as e:
+        print(f"ERROR: openpyxl import failed: {e}")
+        return jsonify({'error': 'Excel support not installed. Run: pip install openpyxl'}), 500
+    except Exception as e:
+        print(f"ERROR: export_attendance_range_excel failed: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/export_attendance_range_graph')
+def export_attendance_range_graph():
+    if not validate_session():
+        return redirect(url_for('login'))
+
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    if not start_date or not end_date:
+        return jsonify({'error': 'Start date and end date are required'}), 400
+
+    try:
+        start_date_dt = datetime.strptime(start_date, '%Y-%m-%d').date()
+        end_date_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+    try:
+        import matplotlib
+        matplotlib.use('Agg')  # headless backend
+        import matplotlib.pyplot as plt
+
+        # Query attendance grouped by date
+        attendance_records = Attendance.query.filter(
+            Attendance.date >= start_date_dt,
+            Attendance.date <= end_date_dt
+        ).all()
+
+        # Build date range and counts
+        date_cursor = start_date_dt
+        dates = []
+        counts = []
+        while date_cursor <= end_date_dt:
+            dates.append(date_cursor.strftime('%Y-%m-%d'))
+            count_for_day = sum(1 for att in attendance_records if att.date == date_cursor)
+            counts.append(count_for_day)
+            date_cursor = date_cursor + timedelta(days=1)
+
+        # Plot
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(dates, counts, marker='o', linewidth=2, color='#0d6efd')
+        ax.set_title(f"Attendance count per day ({start_date} to {end_date})")
+        ax.set_xlabel('Date')
+        ax.set_ylabel('Present Count')
+        ax.grid(True, linestyle='--', alpha=0.4)
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+
+        bio = BytesIO()
+        plt.savefig(bio, format='png')
+        plt.close(fig)
+        bio.seek(0)
+        from flask import send_file
+        filename = f"attendance_graph_{start_date}_to_{end_date}.png"
+        return send_file(bio, as_attachment=True, download_name=filename, mimetype='image/png')
+    except ImportError as e:
+        print(f"ERROR: matplotlib import failed: {e}")
+        return jsonify({'error': 'Graph support not installed. Run: pip install matplotlib'}), 500
+    except Exception as e:
+        print(f"ERROR: export_attendance_range_graph failed: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/register_teacher', methods=['GET', 'POST'])
 def register_teacher():
