@@ -20,12 +20,6 @@
   </div>
 </div>
 
-<div class="mb-3">
-  <button class="btn btn-outline-info" onclick="downloadMyGraph()">
-    <i class="fas fa-chart-line me-2"></i>Download My Graph (Last 30 Days)
-  </button>
-</div>
-
 <div class="card">
   <div class="card-header"><h5 class="mb-0"><i class="fas fa-list me-2"></i>Recent Attendance</h5></div>
   <div class="card-body">
@@ -49,20 +43,6 @@
     {% endif %}
   </div>
 </div>
-{% block scripts %}
-<script>
-  function formatDate(d){
-    const pad = n => String(n).padStart(2,'0');
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-  }
-  function downloadMyGraph(){
-    const end = new Date();
-    const start = new Date(end.getTime() - 29*24*60*60*1000);
-    const url = `/export_attendance_range_graph?start_date=${formatDate(start)}&end_date=${formatDate(end)}`;
-    window.open(url, '_blank');
-  }
-</script>
-{% endblock %}
 {% endblock %}
 
 
